@@ -27,14 +27,18 @@ export class UsersService {
   }
 
   create(createUserDto: CreateUserDto) {
-    const db = this.readDb();
-    const newUser = {
-      id: Math.floor(Math.random() * 100000000) + 1,
-      name: createUserDto.name
-    };
-    db.users.push(newUser);
-    this.writeDb(db);
-    return newUser;
+    try {
+      const db = this.readDb();
+      const newUser = {
+        id: Math.floor(Math.random() * 100000000) + 1,
+        name: createUserDto.name
+      };
+      db.users.push(newUser);
+      this.writeDb(db);
+      return newUser;
+    } catch (error) {
+      return error.message
+    }
   }
 
   findAll() {
