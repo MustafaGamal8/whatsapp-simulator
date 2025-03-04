@@ -6,7 +6,7 @@ import * as path from 'path';
 
 @Injectable()
 export class UsersService {
-  private dbPath = path.join(process.cwd(), 'data', 'db.json');
+  private dbPath = path.join(__dirname, 'data', 'db.json');
 
   private readDb() {
     try {

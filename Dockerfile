@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y \
   xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
+# Create the data directory and set permissions
+RUN mkdir -p /app/data && chmod -R 777 /app/data
+
 # Copy package.json and install dependencies
 COPY package.json package-lock.json ./
 RUN npm install
