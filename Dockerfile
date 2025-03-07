@@ -1,11 +1,8 @@
-# Use a lightweight base image with Chromium support
-FROM node:18-bullseye-slim
+# Use a compatible Node.js version (20+)
+FROM node:20-bullseye-slim
 
 # Set working directory
 WORKDIR /app
-
-# Upgrade npm (to avoid compatibility issues)
-RUN npm install -g npm@latest
 
 # Install required dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
@@ -19,11 +16,11 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m appuser
 USER appuser
 
-# Copy package.json and package-lock.json first to leverage Docker caching
+# Copy package.json and package-lock.json first (for Docker caching)
 COPY --chown=appuser:appuser package.json package-lock.json ./
 
-# Clean npm cache and install only production dependencies
-RUN npm cache clean --force && npm install --only=production
+# Install only production dependencies
+RUN npm ci --omit=dev
 
 # Copy the rest of the application files
 COPY --chown=appuser:appuser . .
