@@ -1,4 +1,4 @@
-# Use a compatible Node.js version (20+)
+# Use a compatible Node.js version
 FROM node:20-bullseye-slim
 
 # Set working directory
@@ -16,11 +16,11 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m appuser
 USER appuser
 
-# Copy package.json and package-lock.json first (for Docker caching)
+# Copy package.json and package-lock.json first
 COPY --chown=appuser:appuser package.json package-lock.json ./
 
 # Install only production dependencies
-RUN npm ci --omit=dev
+RUN npm install --only=production
 
 # Copy the rest of the application files
 COPY --chown=appuser:appuser . .
