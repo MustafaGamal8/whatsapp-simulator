@@ -4,6 +4,9 @@ FROM node:18-bullseye-slim
 # Set working directory
 WORKDIR /app
 
+# Upgrade npm (to avoid compatibility issues)
+RUN npm install -g npm@latest
+
 # Install required dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
   wget curl unzip libnss3 libxss1 libasound2 fonts-liberation \
@@ -19,8 +22,8 @@ USER appuser
 # Copy package.json and package-lock.json first to leverage Docker caching
 COPY --chown=appuser:appuser package.json package-lock.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev
+# Clean npm cache and install only production dependencies
+RUN npm cache clean --force && npm install --only=production
 
 # Copy the rest of the application files
 COPY --chown=appuser:appuser . .
@@ -31,5 +34,5 @@ RUN npm run build
 # Expose port
 EXPOSE 3000
 
-# Start the application directly using Node.js (better performance)
+# Start the application
 CMD ["node", "dist/main.js"]
