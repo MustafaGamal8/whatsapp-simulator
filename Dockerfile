@@ -1,18 +1,4 @@
-### Stage 1: Build the application
-FROM node:18-bullseye AS build
-
-# Set working directory
-WORKDIR /app
-
-# Copy package files and install dependencies
-COPY package.json package-lock.json ./
-RUN npm install --production
-
-# Copy application files and build the project
-COPY . .
-RUN npm run build
-
-### Stage 2: Create a minimal production image
+# Use a base image with Chromium support
 FROM node:18-bullseye
 
 # Set working directory
@@ -43,16 +29,26 @@ RUN apt-get update && apt-get install -y \
   xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy built files from the build stage
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./package.json
+# Create the data directory and set permissions
+RUN mkdir -p /app/data && chmod -R 777 /app/data
 
-# Set environment variables for production
-ENV NODE_ENV=production
+# Copy package.json and package-lock.json first for better caching
+COPY package.json package-lock.json ./
 
-# Expose the necessary port
+# Install dependencies in production mode
+RUN npm ci --only=production
+
+# Copy application files
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Expose port
 EXPOSE 3000
 
-# Start the NestJS application
+# Set environment to production
+ENV NODE_ENV=production
+
+# Start the application
 CMD ["node", "dist/main.js"]
