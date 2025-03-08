@@ -35,14 +35,14 @@ RUN mkdir -p /app/data && chmod -R 777 /app/data
 # Copy package.json and package-lock.json first for better caching
 COPY package.json package-lock.json ./
 
-# Install dependencies in production mode
-RUN npm ci --only=production
+# Install dependencies (including devDependencies for build)
+RUN npm ci
 
 # Copy application files
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build the application using npx (avoiding global NestJS CLI issues)
+RUN npx nest build
 
 # Expose port
 EXPOSE 3000
