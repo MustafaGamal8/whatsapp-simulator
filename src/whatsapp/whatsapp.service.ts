@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
-import { Client, LocalAuth } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -135,15 +135,69 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
+  /**
+   * Validates and formats a phone number for WhatsApp
+   * @param to The phone number to validate/format
+   * @returns Properly formatted WhatsApp ID
+   */
+  private formatWhatsAppId(to: string): string {
+    // Check if phone number is undefined or null
+    if (!to) {
+      throw new Error('Phone number is required and cannot be null or undefined');
+    }
+
+    // Make sure 'to' is a string
+    const toStr = String(to);
+    
+    // If it already has the @c.us suffix, make sure there are no spaces or special characters in the number
+    if (toStr.includes('@c.us')) {
+      const cleanNumber = toStr.split('@')[0].replace(/\D/g, '');
+      return `${cleanNumber}@c.us`;
+    }
+    
+    // Otherwise, clean up the number and add the suffix
+    const cleanNumber = toStr.replace(/\D/g, '');
+    
+    if (!cleanNumber || cleanNumber.length < 10) {
+      throw new Error('Invalid phone number format. Phone number must have at least 10 digits.');
+    }
+    
+    return `${cleanNumber}@c.us`;
+  }
+
   async sendMessage(client: Client, to: string, message: string) {
     try {
-      const response = await client.sendMessage(to, message);
+      const formattedTo = this.formatWhatsAppId(to);
+      const response = await client.sendMessage(formattedTo, message);
       return { success: true, messageId: response.id.id };
     } catch (error) {
       this.logger.error(`Failed to send message: ${error.message}`);
-      throw new HttpException('Failed to send message', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(`Failed to send message: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
+
+  async sendFile(client: Client, to: string, filePath: string, caption?: string) {
+    try {
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      const formattedTo = this.formatWhatsAppId(to);
+      
+      // Create message media from file
+      const media = MessageMedia.fromFilePath(filePath);
+      
+      // Send media
+      const response = await client.sendMessage(formattedTo, media, { caption });
+      return { success: true, messageId: response.id.id };
+    } catch (error) {
+      this.logger.error(`Failed to send file: ${error.message}`);
+      throw new HttpException(`Failed to send file: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+
 
   async getClientStatus(client: Client) {
     try {
@@ -223,6 +277,40 @@ export class WhatsappService implements OnModuleInit {
       };
 
       check();
+    });
+  }
+  
+  /**
+   * Sends a file and automatically deletes it after sending
+   */
+  async sendTemporaryFile(client: Client, to: string, filePath: string, caption?: string) {
+    try {
+      // Send the file
+      const result = await this.sendFile(client, to, filePath, caption);
+      
+      // Delete the file after sending
+      this.deleteFileAsync(filePath);
+      
+      return result;
+    } catch (error) {
+      // Clean up the file even if sending fails
+      this.deleteFileAsync(filePath);
+      throw error;
+    }
+  }
+
+
+
+  /**
+   * Deletes a file asynchronously
+   */
+  private deleteFileAsync(filePath: string): void {
+    fs.unlink(filePath, (err) => {
+      if (err) {
+        this.logger.error(`Failed to delete temporary file ${filePath}: ${err.message}`);
+      } else {
+        this.logger.log(`Successfully deleted temporary file ${filePath}`);
+      }
     });
   }
 }

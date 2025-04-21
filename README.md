@@ -22,17 +22,40 @@
   <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
   [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
+# WhatsApp Simulator
+
+A NestJS application that simulates WhatsApp Web functionality, allowing you to send messages, files, and images programmatically.
+
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+This application provides an API for interacting with WhatsApp Web, enabling you to build custom integrations or automated messaging solutions.
 
-## Project setup
+## Features
+
+- Initialize and manage WhatsApp sessions
+- Send text messages
+- Send files and images
+- API Key authentication for secure access
+- Temporary file storage (files are deleted after sending)
+
+## Installation
 
 ```bash
 $ npm install
 ```
 
-## Compile and run the project
+## Environment Variables
+
+Create a `.env` file in the root directory with the following variables:
+
+```
+PORT=3000
+API_KEY=your_secure_api_key
+```
+
+If `API_KEY` is not set, the API will be accessible without authentication.
+
+## Running the app
 
 ```bash
 # development
@@ -44,6 +67,47 @@ $ npm run start:dev
 # production mode
 $ npm run start:prod
 ```
+
+## API Documentation
+
+All endpoints support API key authentication via the `apiKey` query parameter if `API_KEY` is configured in the .env file.
+
+Example: `GET /whatsapp/1/status?apiKey=your_secure_api_key`
+
+### Session Management
+
+- `POST /whatsapp/:userId/init` - Initialize a WhatsApp session
+- `GET /whatsapp/:userId/reinitialize` - Reinitialize a session
+- `GET /whatsapp/:userId/status` - Get session status
+- `POST /whatsapp/:userId/stop` - Stop a session
+- `POST /whatsapp/:userId/restart` - Restart a session
+- `DELETE /whatsapp/:userId/delete` - Delete a session
+
+### Messaging
+
+- `POST /whatsapp/:userId/send` - Send a text message
+  ```json
+  {
+    "to": "1234567890@c.us",
+    "message": "Hello, world!"
+  }
+  ```
+
+### File and Image Handling
+
+- `POST /whatsapp/:userId/send-file` - Upload and send a file in one step (multipart/form-data)
+  - Form fields:
+    - `file`: The file to upload and send
+    - `to`: The recipient's phone number (format: 1234567890@c.us)
+    - `caption`: (Optional) A caption for the file
+
+- `POST /whatsapp/:userId/send-image` - Upload and send an image in one step (multipart/form-data)
+  - Form fields:
+    - `file`: The image to upload and send (supported formats: jpg, jpeg, png, gif, webp)
+    - `to`: The recipient's phone number (format: 1234567890@c.us)
+    - `caption`: (Optional) A caption for the image
+
+**Note**: Files and images are automatically deleted after being sent to save storage space.
 
 ## Run tests
 
@@ -96,4 +160,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+This project is [MIT licensed](LICENSE).

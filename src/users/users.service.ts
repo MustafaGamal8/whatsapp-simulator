@@ -6,7 +6,7 @@ import * as path from 'path';
 
 @Injectable()
 export class UsersService {
-  private dbPath = path.join(__dirname, 'data', 'db.json');
+  private dbPath = path.join(process.cwd(), 'data', 'users.json');
 
   private readDb() {
     try {
@@ -42,13 +42,23 @@ export class UsersService {
   }
 
   findAll() {
-    const db = this.readDb();
-    return db.users;
+    try {
+      const db = this.readDb();
+      return db.users;
+    } catch (error) {
+      console.error('Error reading users:', error);
+      return [];
+    }
   }
 
   findOne(id: number) {
-    const db = this.readDb();
-    return db.users.find(user => user.id === id);
+    try {
+      const db = this.readDb();
+      return db.users.find(user => user.id === id);
+    } catch (error) {
+      console.error(`Error finding user ${id}:`, error);
+      return null;
+    }
   }
 
   update(id: number, updateUserDto: UpdateUserDto) {

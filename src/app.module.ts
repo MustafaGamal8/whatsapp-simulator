@@ -3,9 +3,16 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { UsersModule } from './users/users.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [WhatsappModule,  UsersModule],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    WhatsappModule,
+    UsersModule
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
