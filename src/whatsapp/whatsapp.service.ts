@@ -9,7 +9,7 @@ import { UsersService } from '../users/users.service';
 export class WhatsappService implements OnModuleInit {
   private readonly logger = new Logger(WhatsappService.name);
   private readonly SESSION_DIR = './data/.wwebjs_auth';
-  private readonly TIMEOUT_SECONDS = 10;
+  private readonly TIMEOUT_SECONDS = 300; // Increase timeout to 5 minutes for QR scanning
   private readonly STATES = {
     CONNECTED: 'CONNECTED',
     PENDING: 'PENDING',
@@ -23,6 +23,34 @@ export class WhatsappService implements OnModuleInit {
   private clients = new Map<string, Client>();
   private clientStates = new Map<string, string>();
 
+  private validateUserId(userId: any): string {
+    if (!userId) {
+      throw new HttpException('User ID is required', HttpStatus.BAD_REQUEST);
+    }
+
+    // Handle object case
+    if (typeof userId === 'object') {
+      const possibleId = userId.id || userId.userId || userId.user_id;
+      if (possibleId) {
+        return String(possibleId);
+      }
+      if (userId.params?.id) {
+        return String(userId.params.id);
+      }
+      if (userId.body?.id) {
+        return String(userId.body.id);
+      }
+      throw new HttpException('Invalid user ID format', HttpStatus.BAD_REQUEST);
+    }
+
+    // Handle string/number case
+    if (typeof userId === 'string' || typeof userId === 'number') {
+      return String(userId);
+    }
+
+    throw new HttpException('Invalid user ID type', HttpStatus.BAD_REQUEST);
+  }
+
   async onModuleInit() {
     try {
       if (!fs.existsSync(this.SESSION_DIR)) {
@@ -34,24 +62,36 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
-  async initialize(userId: string) {
-    if (!await this.validateUser(userId)) {
+  async initialize(userId: any) {
+    const validUserId = this.validateUserId(userId);
+
+    if (!await this.validateUser(validUserId)) {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
 
-    if (this.clients.has(userId)) {
-      return;
+    // If client exists and is in a valid state, return current QR code
+    if (this.clients.has(validUserId)) {
+      const state = this.clientStates.get(validUserId);
+      if (state === this.STATES.PENDING) {
+        return this.qrCodes.get(validUserId);
+      }
+      if (state === this.STATES.CONNECTED) {
+        return null;
+      }
     }
 
     try {
-      this.clientStates.set(userId, this.STATES.INITIALIZING);
-      const client = this.createClient(userId);
-      await this.setupClient(client, userId);
-      return  this.qrCodes.get(userId);
+      this.clientStates.set(validUserId, this.STATES.INITIALIZING);
+      const client = this.createClient(validUserId);
+      this.clients.set(validUserId, client);
+      await this.setupClient(client, validUserId);
+      return this.qrCodes.get(validUserId);
     } catch (error) {
-      this.clientStates.delete(userId);
-      this.logger.error(`Failed to initialize client ${userId}: ${error.message}`);
-      throw new HttpException('Failed to initialize WhatsApp client', HttpStatus.INTERNAL_SERVER_ERROR);
+      this.cleanup(validUserId);
+      throw new HttpException(
+        `Failed to initialize WhatsApp client: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
@@ -62,48 +102,69 @@ export class WhatsappService implements OnModuleInit {
         dataPath: this.SESSION_DIR
       }),
       puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        headless: true
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu'
+        ],
+        headless: true,
+        timeout: 60000
       }
     });
   }
 
   private async setupClient(client: Client, userId: string) {
-    client.on('qr', async (qr) => {
-      this.logger.log(`QR Code received for client ${userId}`);
-      try {
-        const url = await qrcode.toDataURL(qr);
-        this.qrCodes.set(userId, url);
-        this.clientStates.set(userId, this.STATES.PENDING);
-      } catch (error) {
-        this.logger.error(`Failed to generate QR code: ${error.message}`);
-      }
-    });
+    let initializationTimeout: NodeJS.Timeout;
 
-    client.on('ready', () => {
-      this.logger.log(`Client ${userId} is ready`);
-      this.qrCodes.set(userId, null);
-      this.clientStates.set(userId, this.STATES.CONNECTED);
-    });
-
-    client.on('auth_failure', (msg) => {
-      this.logger.error(`Authentication failed for client ${userId}: ${msg}`);
-      this.cleanup(userId);
-    });
-
-    client.on('disconnected', (reason) => {
-      this.logger.warn(`Client ${userId} disconnected. Reason: ${reason}`);
-      this.clientStates.set(userId, this.STATES.DISCONNECTED);
+    const timeoutPromise = new Promise((_, reject) => {
+      initializationTimeout = setTimeout(() => {
+        reject(new Error('Client initialization timeout'));
+      }, 60000);
     });
 
     try {
-      this.logger.log(`Initializing client ${userId}...`);
-      await client.initialize();
-      this.logger.log(`Client ${userId} initialization completed`);
+      client.on('qr', async (qr) => {
+        try {
+          const url = await qrcode.toDataURL(qr);
+          this.qrCodes.set(userId, url);
+          this.clientStates.set(userId, this.STATES.PENDING);
+        } catch (error) {
+          this.logger.error(`Failed to generate QR code: ${error.message}`);
+        }
+      });
+
+      client.on('ready', () => {
+        this.qrCodes.set(userId, null);
+        this.clientStates.set(userId, this.STATES.CONNECTED);
+        clearTimeout(initializationTimeout);
+      });
+
+      client.on('auth_failure', (msg) => {
+        this.logger.error(`Authentication failed: ${msg}`);
+        this.cleanup(userId);
+        clearTimeout(initializationTimeout);
+      });
+
+      client.on('disconnected', (reason) => {
+        this.clientStates.set(userId, this.STATES.DISCONNECTED);
+        clearTimeout(initializationTimeout);
+      });
+
+      await Promise.race([
+        client.initialize(),
+        timeoutPromise
+      ]);
+
       this.clients.set(userId, client);
     } catch (error) {
-      this.logger.error(`Failed to initialize client ${userId}: ${error.message}`);
+      this.cleanup(userId);
       throw error;
+    } finally {
+      clearTimeout(initializationTimeout);
     }
   }
 
@@ -148,20 +209,20 @@ export class WhatsappService implements OnModuleInit {
 
     // Make sure 'to' is a string
     const toStr = String(to);
-    
+
     // If it already has the @c.us suffix, make sure there are no spaces or special characters in the number
     if (toStr.includes('@c.us')) {
       const cleanNumber = toStr.split('@')[0].replace(/\D/g, '');
       return `${cleanNumber}@c.us`;
     }
-    
+
     // Otherwise, clean up the number and add the suffix
     const cleanNumber = toStr.replace(/\D/g, '');
-    
+
     if (!cleanNumber || cleanNumber.length < 10) {
       throw new Error('Invalid phone number format. Phone number must have at least 10 digits.');
     }
-    
+
     return `${cleanNumber}@c.us`;
   }
 
@@ -184,10 +245,10 @@ export class WhatsappService implements OnModuleInit {
       }
 
       const formattedTo = this.formatWhatsAppId(to);
-      
+
       // Create message media from file
       const media = MessageMedia.fromFilePath(filePath);
-      
+
       // Send media
       const response = await client.sendMessage(formattedTo, media, { caption });
       return { success: true, messageId: response.id.id };
@@ -199,13 +260,54 @@ export class WhatsappService implements OnModuleInit {
 
 
 
-  async getClientStatus(client: Client) {
+  async getClientStatus(userId: any) {
     try {
-      const state = await client.getState();
-      return { status: state };
+      const validUserId = this.validateUserId(userId);
+      const client = this.clients.get(validUserId);
+      const state = this.clientStates.get(validUserId);
+
+      if (!client) {
+        return { status: 'NOT_FOUND' };
+      }
+
+      if (!state) {
+        return { status: 'UNKNOWN' };
+      }
+
+      if (state === this.STATES.PENDING) {
+        const qrCode = this.qrCodes.get(validUserId);
+        return {
+          status: state,
+          isConnected: false,
+          message: 'Waiting for QR code scan'
+        };
+      }
+
+      if (state === this.STATES.CONNECTED) {
+        try {
+          const whatsappState = await client.getState();
+          return {
+            status: state,
+            whatsappState: whatsappState,
+            isConnected: true
+          };
+        } catch (error) {
+          return {
+            status: 'ERROR',
+            error: error.message
+          };
+        }
+      }
+
+      return {
+        status: state,
+        isConnected: state === this.STATES.CONNECTED
+      };
     } catch (error) {
-      this.logger.error(`Failed to get client status: ${error.message}`);
-      throw new HttpException('Failed to get client status', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(
+        `Failed to get client status: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
@@ -232,21 +334,47 @@ export class WhatsappService implements OnModuleInit {
     return await this.initialize(userId);
   }
 
-  private cleanup(userId: string) {
-    this.clients.delete(userId);
-    this.qrCodes.delete(userId);
-    this.clientStates.delete(userId);
+  private cleanup(userId: string | number) {
+    const validUserId = this.validateUserId(userId);
+    const client = this.clients.get(validUserId);
+
+    if (client) {
+      try {
+        client.destroy();
+      } catch (error) {
+        this.logger.error(`Error destroying client: ${error.message}`);
+      }
+    }
+
+    this.clients.delete(validUserId);
+    this.qrCodes.delete(validUserId);
+    this.clientStates.delete(validUserId);
   }
 
   async validateUser(userId: string): Promise<boolean> {
-    const user = await this.usersService.findOne(Number(userId));
-    return !!user;
+    try {
+      const user = await this.usersService.findOne(Number(userId));
+      return !!user;
+    } catch (error) {
+      this.logger.error(`Error validating user ${userId}: ${error.message}`);
+      return false;
+    }
   }
 
   async ensureClientInitialized(userId: string): Promise<Client> {
-    console.log("🚀 ~ WhatsappService ~ ensureClientInitialized ~ userId:", userId)
-    console.log("🚀 ~ WhatsappService ~ ensureClientInitialized ~ this.clients.has(userId):", this.clients.has(userId))
     if (!this.clients.has(userId)) {
+      await this.initialize(userId);
+    }
+
+    const client = this.clients.get(userId);
+    const state = this.clientStates.get(userId);
+
+    if (state === this.STATES.PENDING) {
+      return client;
+    }
+
+    if (state === this.STATES.DISCONNECTED) {
+      await this.cleanup(userId);
       await this.initialize(userId);
     }
 
@@ -255,31 +383,49 @@ export class WhatsappService implements OnModuleInit {
 
 
   private waitForClientReady(userId: string): Promise<Client> {
-    console.log("🚀 ~ WhatsappService ~ waitForClientReady ~ userId:", userId)
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
       const check = () => {
         const client = this.clients.get(userId);
+        const state = this.clientStates.get(userId);
         const elapsed = (Date.now() - startTime) / 1000;
 
         if (elapsed > this.TIMEOUT_SECONDS) {
+          if (state !== this.STATES.PENDING) {
+            this.cleanup(userId);
+          }
           reject(new HttpException('Client initialization timeout', HttpStatus.REQUEST_TIMEOUT));
           return;
         }
 
-        
-        console.log("🚀 ~ WhatsappService ~ check ~ clientStates.get(userId):", this.clientStates.get(userId))
-        if (client &&( this.clientStates.get(userId) == this.STATES.CONNECTED || this.clientStates.get(userId) == this.STATES.PENDING)) {
-          resolve(client);
-        } else {
-          setTimeout(check, 200);
+        if (!client) {
+          reject(new HttpException('Client not found', HttpStatus.NOT_FOUND));
+          return;
         }
+
+        if (state === this.STATES.DISCONNECTED) {
+          this.cleanup(userId);
+          reject(new HttpException('Client is disconnected', HttpStatus.SERVICE_UNAVAILABLE));
+          return;
+        }
+
+        if (state === this.STATES.CONNECTED) {
+          resolve(client);
+          return;
+        }
+
+        if (state === this.STATES.PENDING) {
+          setTimeout(check, 1000);
+          return;
+        }
+
+        setTimeout(check, 1000);
       };
 
       check();
     });
   }
-  
+
   /**
    * Sends a file and automatically deletes it after sending
    */
@@ -287,10 +433,10 @@ export class WhatsappService implements OnModuleInit {
     try {
       // Send the file
       const result = await this.sendFile(client, to, filePath, caption);
-      
+
       // Delete the file after sending
       this.deleteFileAsync(filePath);
-      
+
       return result;
     } catch (error) {
       // Clean up the file even if sending fails

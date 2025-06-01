@@ -59,8 +59,16 @@ export class WhatsappController {
 
   @Get('status')
   async getStatus(@UserId() userId: string, @Res() res: Response, @Req() req) {
-    const status = await this.whatsappService.getClientStatus(req['client']);
-    res.status(HttpStatus.OK).json(status);
+    try {
+      const status = await this.whatsappService.getClientStatus(userId);
+      res.status(HttpStatus.OK).json(status);
+    } catch (error) {
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   @Post('send')
@@ -72,22 +80,30 @@ export class WhatsappController {
   ) {
     try {
       if (!messageDto.to) {
-        return res.status(HttpStatus.BAD_REQUEST).json({ 
+        return res.status(HttpStatus.BAD_REQUEST).json({
           message: 'Recipient (to) is required',
           example: '1234567890@c.us or just 1234567890'
         });
       }
 
       if (!messageDto.message) {
-        return res.status(HttpStatus.BAD_REQUEST).json({ 
+        return res.status(HttpStatus.BAD_REQUEST).json({
           message: 'Message content is required'
         });
       }
 
-      const result = await this.whatsappService.sendMessage(req['client'], messageDto.to, messageDto.message);
+      const client = req['client'];
+      if (!client) {
+        return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+          message: 'WhatsApp client is not available',
+          status: 'NOT_READY'
+        });
+      }
+
+      const result = await this.whatsappService.sendMessage(client, messageDto.to, messageDto.message);
       res.status(HttpStatus.OK).json(result);
     } catch (error) {
-      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ 
+      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
         message: `Failed to send message: ${error.message}`,
         hint: error.message.includes('wid error') ? 'Make sure the phone number is in the format: countrycode+number (e.g., 1234567890) or countrycode+number@c.us (e.g., 1234567890@c.us)' : undefined,
         error: error.message
@@ -112,18 +128,25 @@ export class WhatsappController {
       }
 
       if (!fileUploadDto.to || fileUploadDto.to.trim() === '') {
-        return res.status(HttpStatus.BAD_REQUEST).json({ 
+        return res.status(HttpStatus.BAD_REQUEST).json({
           message: 'Recipient (to) is required',
           example: '1234567890@c.us or just 1234567890'
         });
       }
 
+      const client = req['client'];
+      if (!client) {
+        return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+          message: 'WhatsApp client is not available',
+          status: 'NOT_READY'
+        });
+      }
+
       const caption = fileUploadDto.caption || '';
       const filePath = path.join(process.cwd(), file.path);
-      
-      // Use the service method that handles sending and cleanup
+
       const result = await this.whatsappService.sendTemporaryFile(
-        req['client'],
+        client,
         fileUploadDto.to.trim(),
         filePath,
         caption
@@ -131,10 +154,10 @@ export class WhatsappController {
 
       return res.status(HttpStatus.OK).json(result);
     } catch (error) {
-      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ 
+      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
         message: `Failed to send file: ${error.message}`,
         hint: error.message.includes('wid error') ? 'Make sure the phone number is in the format: countrycode+number (e.g., 1234567890) or countrycode+number@c.us (e.g., 1234567890@c.us)' : undefined,
-        error: error.message 
+        error: error.message
       });
     }
   }
