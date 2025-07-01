@@ -52,9 +52,9 @@ export class WhatsappController {
     if (!qrCode) {
       return res.status(HttpStatus.NOT_FOUND).json({ message: 'QR code not found' });
     }
-    const img = Buffer.from(qrCode.split(',')[1], 'base64');
-    res.setHeader('Content-Type', 'image/png');
-    res.send(img);
+    // const img = Buffer.from(qrCode.split(',')[1], 'base64');
+    // res.setHeader('Content-Type', 'image/png');
+    res.send(qrCode);
   }
 
   @Get('status')
