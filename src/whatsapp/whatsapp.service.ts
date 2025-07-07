@@ -229,7 +229,7 @@ export class WhatsappService implements OnModuleInit {
   async sendMessage(client: Client, to: string, message: string) {
     try {
       const formattedTo = this.formatWhatsAppId(to);
-      const response = await client.sendMessage(formattedTo, message);
+      const response = await client.sendMessage(to, message);
       return { success: true, messageId: response.id.id };
     } catch (error) {
       this.logger.error(`Failed to send message: ${error.message}`);

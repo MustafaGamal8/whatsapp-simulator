@@ -47,14 +47,18 @@ export class WhatsappController {
   }
 
   @Get('reinitialize')
-  async getQrCode(@UserId() userId: string, @Res() res: Response) {
+  async getQrCode(@UserId() userId: string, @Res() res: Response, @Req() req) {
     const qrCode = await this.whatsappService.reinitialize(userId);
     if (!qrCode) {
       return res.status(HttpStatus.NOT_FOUND).json({ message: 'QR code not found' });
     }
-    // const img = Buffer.from(qrCode.split(',')[1], 'base64');
-    // res.setHeader('Content-Type', 'image/png');
-    res.send(qrCode);
+    if (req.query.type === 'preview') {
+      const img = Buffer.from(qrCode.split(',')[1], 'base64');
+      res.setHeader('Content-Type', 'image/png');
+      res.send(img);
+    } else {
+      res.send(qrCode);
+    }
   }
 
   @Get('status')
