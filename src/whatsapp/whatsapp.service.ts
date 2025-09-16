@@ -1,8 +1,10 @@
 import { Injectable, Logger, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
-import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import { Buttons, Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import { ConfigService } from '@nestjs/config';
 import * as qrcode from 'qrcode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 import { UsersService } from '../users/users.service';
 
 @Injectable()
@@ -17,7 +19,10 @@ export class WhatsappService implements OnModuleInit {
     INITIALIZING: 'INITIALIZING'
   };
 
-  constructor(private readonly usersService: UsersService) { }
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly configService: ConfigService
+  ) { }
 
   private qrCodes = new Map<string, string | null>();
   private clients = new Map<string, Client>();
@@ -68,6 +73,8 @@ export class WhatsappService implements OnModuleInit {
     if (!await this.validateUser(validUserId)) {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
+
+
 
     // If client exists and is in a valid state, return current QR code
     if (this.clients.has(validUserId)) {
@@ -226,13 +233,76 @@ export class WhatsappService implements OnModuleInit {
     return `${cleanNumber}@c.us`;
   }
 
+  /**
+   * Validates and formats a group ID for WhatsApp
+   * @param groupId The group ID to validate/format
+   * @returns Properly formatted group ID
+   */
+  private formatGroupId(groupId: string): string {
+    // Check if group ID is undefined or null
+    if (!groupId) {
+      throw new Error('Group ID is required and cannot be null or undefined');
+    }
+
+    // Make sure groupId is a string
+    const groupIdStr = String(groupId);
+
+    // If it already has the @g.us suffix, make sure there are no spaces or special characters
+    if (groupIdStr.includes('@g.us')) {
+      const cleanId = groupIdStr.split('@')[0].replace(/\D/g, '');
+      return `${cleanId}@g.us`;
+    }
+
+    // Otherwise, clean up the ID and add the suffix
+    const cleanId = groupIdStr.replace(/\D/g, '');
+
+    if (!cleanId || cleanId.length < 10) {
+      throw new Error('Invalid group ID format. Group ID must have at least 10 digits.');
+    }
+
+    return `${cleanId}@g.us`;
+  }
+
   async sendMessage(client: Client, to: string, message: string) {
     try {
-      const formattedTo = this.formatWhatsAppId(to);
-      const response = await client.sendMessage(to, message);
-      return { success: true, messageId: response.id.id };
+      // Determine if this is a group or individual contact
+      let formattedTo;
+      let isGroup = false;
+
+      if (to.includes('@g.us')) {
+        // This is a group
+        formattedTo = this.formatGroupId(to);
+        isGroup = true;
+      } else {
+        // This is an individual contact
+        formattedTo = this.formatWhatsAppId(to);
+      }
+
+      const response = await client.sendMessage(formattedTo, message);
+
+      if (isGroup) {
+        // For groups, try to get group info for better response
+        try {
+          const chat = await client.getChatById(formattedTo);
+          return {
+            success: true,
+            messageId: response.id.id,
+            groupName: chat.name,
+            groupId: formattedTo
+          };
+        } catch (chatError) {
+          // If we can't get group info, still return success
+          return {
+            success: true,
+            messageId: response.id.id,
+            groupId: formattedTo
+          };
+        }
+      } else {
+        return { success: true, messageId: response.id.id };
+      }
     } catch (error) {
-      this.logger.error(`Failed to send message: ${error.message}`);
+      this.logger.error(`Failed to send message: ${error.message}`, error.stack);
       throw new HttpException(`Failed to send message: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
@@ -244,16 +314,48 @@ export class WhatsappService implements OnModuleInit {
         throw new Error(`File not found: ${filePath}`);
       }
 
-      const formattedTo = this.formatWhatsAppId(to);
+      // Determine if this is a group or individual contact
+      let formattedTo;
+      let isGroup = false;
+
+      if (to.includes('@g.us')) {
+        // This is a group
+        formattedTo = this.formatGroupId(to);
+        isGroup = true;
+      } else {
+        // This is an individual contact
+        formattedTo = this.formatWhatsAppId(to);
+      }
 
       // Create message media from file
       const media = MessageMedia.fromFilePath(filePath);
 
       // Send media
       const response = await client.sendMessage(formattedTo, media, { caption });
-      return { success: true, messageId: response.id.id };
+
+      if (isGroup) {
+        // For groups, try to get group info for better response
+        try {
+          const chat = await client.getChatById(formattedTo);
+          return {
+            success: true,
+            messageId: response.id.id,
+            groupName: chat.name,
+            groupId: formattedTo
+          };
+        } catch (chatError) {
+          // If we can't get group info, still return success
+          return {
+            success: true,
+            messageId: response.id.id,
+            groupId: formattedTo
+          };
+        }
+      } else {
+        return { success: true, messageId: response.id.id };
+      }
     } catch (error) {
-      this.logger.error(`Failed to send file: ${error.message}`);
+      this.logger.error(`Failed to send file: ${error.message}`, error.stack);
       throw new HttpException(`Failed to send file: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
@@ -459,5 +561,210 @@ export class WhatsappService implements OnModuleInit {
       }
     });
   }
+
+  /**
+   * Check if media should be included based on type and options
+   */
+  private shouldIncludeMedia(messageType: string, mediaOptions: {
+    includeMedia?: boolean;
+    includeImages?: boolean;
+    includeVideos?: boolean;
+    includeAudio?: boolean;
+  }): boolean {
+    if (mediaOptions.includeMedia) return true;
+
+    switch (messageType) {
+      case 'image':
+        return mediaOptions.includeImages || false;
+      case 'video':
+        return mediaOptions.includeVideos || false;
+      case 'audio':
+      case 'ptt': // Push to talk (voice message)
+        return mediaOptions.includeAudio || false;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Create temporary URL for media content
+   */
+  private async createTemporaryMediaUrl(media: any, messageType: string): Promise<string> {
+    try {
+      // Determine file extension based on message type and mimetype
+      let extension = '.bin';
+      if (media.mimetype) {
+        const mimeExtensions = {
+          'image/jpeg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'image/webp': '.webp',
+          'video/mp4': '.mp4',
+          'video/webm': '.webm',
+          'audio/mpeg': '.mp3',
+          'audio/ogg': '.ogg',
+          'audio/wav': '.wav',
+          'audio/aac': '.aac'
+        };
+        extension = mimeExtensions[media.mimetype] || extension;
+      }
+
+      // Create unique filename
+      const filename = `${uuidv4()}${extension}`;
+      const dir = messageType === 'image' ? './uploads/temp/images' : './uploads/temp/files';
+      const filePath = path.join(dir, filename);
+
+      // Ensure directory exists
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Write media data to file
+      fs.writeFileSync(filePath, media.data, 'base64');
+
+
+
+      // Get app URL from config and create full URL
+      const appUrl = this.configService.get<string>('APP_URL') || 'http://localhost:3000';
+      const mediaType = messageType === 'image' ? 'images' : 'files';
+      const fullUrl = `${appUrl}/media/temp/${mediaType}/${filename}`;
+
+      return fullUrl;
+    } catch (error) {
+      this.logger.error(`Failed to create temporary media URL: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+ * Get all groups for a user
+ */
+  async getGroups(client: Client) {
+    try {
+      // Check if client is ready
+      const state = await client.getState();
+      if (state !== 'CONNECTED') {
+        throw new Error('WhatsApp client is not connected');
+      }
+
+      const chats = await client.getChats();
+      const groups = chats.filter(chat => chat.isGroup);
+
+      return groups.map(group => ({
+        id: group.id._serialized,
+        name: group.name,
+        isGroup: group.isGroup,
+        isReadOnly: group.isReadOnly || false
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to get groups: ${error.message}`, error.stack);
+      throw new HttpException(`Failed to get groups: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  /**
+   * Search groups by name
+   */
+  async searchGroups(client: Client, query: string) {
+    try {
+      // Check if client is ready
+      const state = await client.getState();
+      if (state !== 'CONNECTED') {
+        throw new Error('WhatsApp client is not connected');
+      }
+
+      const chats = await client.getChats();
+      const groups = chats.filter(chat => chat.isGroup);
+
+      const filteredGroups = groups.filter(group =>
+        group.name.toLowerCase().includes(query.toLowerCase())
+      );
+
+      return filteredGroups.map(group => ({
+        id: group.id._serialized,
+        name: group.name,
+        isGroup: group.isGroup,
+        isReadOnly: group.isReadOnly || false
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to search groups: ${error.message}`, error.stack);
+      throw new HttpException(`Failed to search groups: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+
+  /**
+     * Get last N messages from a group, optionally filter by sender
+     * @param client WhatsApp client
+     * @param groupId Group ID (serialized)
+     * @param limit Number of messages to fetch (default 10)
+     * @param mediaOptions Options for including media content
+     * @returns Array of messages
+     */
+  async getGroupMessages(client: Client, groupId: string, limit: number = 10, mediaOptions?: {
+    includeMedia?: boolean;
+    includeImages?: boolean;
+    includeVideos?: boolean;
+    includeAudio?: boolean;
+  }) {
+    try {
+      const formattedGroupId = this.formatGroupId(groupId);
+      const chat = await client.getChatById(formattedGroupId);
+      if (!chat.isGroup) {
+        throw new Error('Provided chat is not a group');
+      }
+      // Fetch messages
+      const messages = await chat.fetchMessages({ limit });
+
+      // Map to useful info
+      const mappedMessages = await Promise.all(messages.reverse().map(async (msg) => {
+        const baseMessage = {
+          id: msg.id._serialized,
+          body: msg.body,
+          sender: msg.author || msg.from,
+          timestamp: msg.timestamp,
+          type: msg.type,
+          media: null
+        };
+
+        // Check if media options are enabled and message has media
+        if (mediaOptions && (mediaOptions.includeMedia || mediaOptions.includeImages || mediaOptions.includeVideos || mediaOptions.includeAudio)) {
+          if (msg.hasMedia) {
+            try {
+              const media = await msg.downloadMedia();
+              const shouldInclude = this.shouldIncludeMedia(msg.type, mediaOptions);
+
+              if (shouldInclude && media) {
+                // Create temporary file
+                const tempUrl = await this.createTemporaryMediaUrl(media, msg.type);
+                return {
+                  ...baseMessage,
+                  media: {
+                    hasMedia: true,
+                    type: msg.type,
+                    url: tempUrl,
+                    mimeType: media.mimetype,
+                    
+                    filename: media.filename || null
+                  }
+                };
+              }
+            } catch (mediaError) {
+              this.logger.warn(`Failed to download media for message ${msg.id._serialized}: ${mediaError.message}`);
+            }
+          }
+        }
+
+        return baseMessage;
+      }));
+
+      return mappedMessages;
+    } catch (error) {
+      this.logger.error(`Failed to get group messages: ${error.message}`);
+      throw new HttpException(`Failed to get group messages: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+
 }
 

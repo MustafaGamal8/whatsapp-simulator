@@ -7,6 +7,7 @@ export class WhatsappAuthMiddleware implements NestMiddleware {
   constructor(private whatsappService: WhatsappService) { }
 
   async use(req: Request, res: Response, next: NextFunction) {
+
     try {
       const userId = req.params.userId;
       if (!userId) {
@@ -45,3 +46,4 @@ export class WhatsappAuthMiddleware implements NestMiddleware {
     }
   }
 }
+

@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { UsersModule } from './users/users.module';
+import { MediaModule } from './media/media.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
@@ -11,9 +12,10 @@ import { ConfigModule } from '@nestjs/config';
       isGlobal: true,
     }),
     WhatsappModule,
-    UsersModule
+    UsersModule,
+    MediaModule
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

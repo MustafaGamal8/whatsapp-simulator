@@ -35,8 +35,11 @@ This application provides an API for interacting with WhatsApp Web, enabling you
 - Initialize and manage WhatsApp sessions
 - Send text messages
 - Send files and images
+- Get group lists and search groups
+- Retrieve group messages with media support
 - API Key authentication for secure access
 - Temporary file storage (files are deleted after sending)
+- Temporary media URLs for retrieved messages (expires in 1 hour)
 
 ## Installation
 
@@ -106,6 +109,58 @@ Example: `GET /whatsapp/1/status?apiKey=your_secure_api_key`
     - `file`: The image to upload and send (supported formats: jpg, jpeg, png, gif, webp)
     - `to`: The recipient's phone number (format: 1234567890@c.us)
     - `caption`: (Optional) A caption for the image
+
+### Group Management
+
+- `GET /whatsapp/:userId/groups` - Get all groups for the user
+  - Query Parameters:
+    - `query` (optional): Search groups by name
+
+- `GET /whatsapp/:userId/groups/:groupId/messages` - Get messages from a specific group
+  - Path Parameters:
+    - `groupId`: The group ID (can be with or without @g.us suffix)
+  - Query Parameters:
+    - `sen` (optional): Filter messages by sender ID
+    - `limit` (optional): Number of messages to retrieve (default: 10)
+    - `includeMedia` (optional): Include all media types (true/false)
+    - `includeImages` (optional): Include image URLs (true/false)
+    - `includeVideos` (optional): Include video URLs (true/false)
+    - `includeAudio` (optional): Include audio/voice URLs (true/false)
+
+  **Response Format:**
+  ```json
+  [
+    {
+      "id": "message_id",
+      "body": "message text",
+      "sender": "sender_phone@c.us",
+      "timestamp": 1234567890,
+      "type": "chat",
+      "media": null
+    },
+    {
+      "id": "message_id_2",
+      "body": "",
+      "sender": "sender_phone@c.us", 
+      "timestamp": 1234567891,
+      "type": "image",
+      "media": {
+        "hasMedia": true,
+        "type": "image",
+        "url": "http://localhost:3000/whatsapp/media/images/uuid.jpg",
+        "mimeType": "image/jpeg",
+        "filename": null
+      }
+    }
+  ]
+  ```
+
+- `GET /whatsapp/media/:type/:filename` - Serve temporary media files
+  - Path Parameters:
+    - `type`: Media type (images/files)
+    - `filename`: The filename to retrieve
+  
+  **Note**: Media files are temporary and automatically deleted after 1 hour.
 
 **Note**: Files and images are automatically deleted after being sent to save storage space.
 

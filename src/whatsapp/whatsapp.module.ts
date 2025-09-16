@@ -1,4 +1,5 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { WhatsappController } from './whatsapp.controller';
 import { WhatsappService } from './whatsapp.service';
@@ -7,7 +8,7 @@ import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [UsersModule],
+  imports: [UsersModule, ConfigModule],
   controllers: [WhatsappController],
   providers: [
     WhatsappService,
