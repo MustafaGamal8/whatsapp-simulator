@@ -278,6 +278,21 @@ export class WhatsappService implements OnModuleInit {
         formattedTo = this.formatWhatsAppId(to);
       }
 
+      // Validate that the number exists before sending
+      if (!isGroup) {
+        try {
+          const numberId = await client.getNumberId(formattedTo.replace('@c.us', ''));
+          if (!numberId) {
+            throw new Error(`The number ${formattedTo} is not registered on WhatsApp`);
+          }
+          // Use the validated number ID
+          formattedTo = numberId._serialized;
+        } catch (validationError) {
+          // If getNumberId fails, try to send anyway but with better error message
+          this.logger.warn(`Number validation failed for ${formattedTo}: ${validationError.message}`);
+        }
+      }
+
       const response = await client.sendMessage(formattedTo, message);
 
       if (isGroup) {
@@ -307,6 +322,87 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
+  async sendBulkMessages(
+    client: Client,
+    phoneNumbers: string[],
+    message: string,
+    delayMs: number = 1000
+  ): Promise<Array<{
+    number: string;
+    success: boolean;
+    messageId?: string;
+    error?: string;
+  }>> {
+    const results = [];
+
+    for (const phoneNumber of phoneNumbers) {
+      try {
+        // Add delay between messages to avoid rate limiting
+        if (results.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        const result = await this.sendMessage(client, phoneNumber, message);
+
+        results.push({
+          number: phoneNumber,
+          success: true,
+          messageId: result.messageId
+        });
+
+      } catch (error) {
+        results.push({
+          number: phoneNumber,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    return results;
+  }
+
+  async sendBulkMessagesWithImage(
+    client: Client,
+    phoneNumbers: string[],
+    imagePath: string,
+    caption: string,
+    delayMs: number = 1000
+  ): Promise<Array<{
+    number: string;
+    success: boolean;
+    messageId?: string;
+    error?: string;
+  }>> {
+    const results = [];
+
+    for (const phoneNumber of phoneNumbers) {
+      try {
+        // Add delay between messages to avoid rate limiting
+        if (results.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        const result = await this.sendFile(client, phoneNumber, imagePath, caption);
+
+        results.push({
+          number: phoneNumber,
+          success: true,
+          messageId: result.messageId
+        });
+
+      } catch (error) {
+        results.push({
+          number: phoneNumber,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    return results;
+  }
+
   async sendFile(client: Client, to: string, filePath: string, caption?: string) {
     try {
       // Check if file exists
@@ -325,6 +421,21 @@ export class WhatsappService implements OnModuleInit {
       } else {
         // This is an individual contact
         formattedTo = this.formatWhatsAppId(to);
+      }
+
+      // Validate that the number exists before sending (only for individual contacts)
+      if (!isGroup) {
+        try {
+          const numberId = await client.getNumberId(formattedTo.replace('@c.us', ''));
+          if (!numberId) {
+            throw new Error(`The number ${formattedTo} is not registered on WhatsApp`);
+          }
+          // Use the validated number ID
+          formattedTo = numberId._serialized;
+        } catch (validationError) {
+          // If getNumberId fails, try to send anyway but with better error message
+          this.logger.warn(`Number validation failed for ${formattedTo}: ${validationError.message}`);
+        }
       }
 
       // Create message media from file
@@ -744,7 +855,7 @@ export class WhatsappService implements OnModuleInit {
                     type: msg.type,
                     url: tempUrl,
                     mimeType: media.mimetype,
-                    
+
                     filename: media.filename || null
                   }
                 };
