@@ -36,7 +36,7 @@ RUN mkdir -p /app/data && chmod -R 777 /app/data
 COPY package.json package-lock.json ./
 
 # Install dependencies (including devDependencies for build)
-RUN npm ci
+RUN npm install
 
 # Copy application files
 COPY . .
