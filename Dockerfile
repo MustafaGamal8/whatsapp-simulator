@@ -1,4 +1,4 @@
-# Base image with Node 18 (compatible with NestJS + Puppeteer)
+# Use a base image with Chromium support
 FROM node:18-bullseye
 
 # Set working directory
@@ -27,36 +27,28 @@ RUN apt-get update && apt-get install -y \
   libxrandr2 \
   libxshmfence1 \
   xdg-utils \
-  chromium \
   && rm -rf /var/lib/apt/lists/*
 
-# Create the data directory for WhatsApp session
+# Create the data directory and set permissions
 RUN mkdir -p /app/data && chmod -R 777 /app/data
 
-# Enable Corepack and PNPM
-RUN corepack enable
-ENV PUPPETEER_SKIP_DOWNLOAD=false
+# Copy package.json and package-lock.json first for better caching
+COPY package.json package-lock.json ./
 
-# Copy package.json and pnpm-lock.yaml for caching
-COPY package.json pnpm-lock.yaml ./
+# Install dependencies (including devDependencies for build)
+RUN npm ci
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Install Puppeteer Chrome browser explicitly
-RUN pnpm exec puppeteer browsers install chrome
-
-# Copy app source
+# Copy application files
 COPY . .
 
-# Build NestJS app
-RUN pnpm exec nest build
+# Build the application using npx (avoiding global NestJS CLI issues)
+RUN npx nest build
 
 # Expose port
 EXPOSE 3000
 
-# Set production env
+# Set environment to production
 ENV NODE_ENV=production
 
-# Run the app
+# Start the application
 CMD ["node", "dist/main.js"]
