@@ -1,8 +1,7 @@
-FROM node:18-bullseye
+FROM node:18-bookworm
 
 WORKDIR /app
 
-# Chromium / Puppeteer dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
@@ -33,7 +32,7 @@ RUN mkdir -p /app/data && chmod -R 777 /app/data
 
 COPY package.json package-lock.json ./
 
-RUN npm install
+RUN npm ci
 
 COPY . .
 
