@@ -119,7 +119,8 @@ export class WhatsappService implements OnModuleInit {
           '--disable-gpu'
         ],
         headless: true,
-        timeout: 60000
+        timeout: 60000,
+        protocolTimeout: 120000
       }
     });
   }
@@ -263,64 +264,87 @@ export class WhatsappService implements OnModuleInit {
     return `${cleanId}@g.us`;
   }
 
+
   async sendMessage(client: Client, to: string, message: string) {
     try {
-      // Determine if this is a group or individual contact
-      let formattedTo;
-      let isGroup = false;
-
-      if (to.includes('@g.us')) {
-        // This is a group
-        formattedTo = this.formatGroupId(to);
-        isGroup = true;
-      } else {
-        // This is an individual contact
-        formattedTo = this.formatWhatsAppId(to);
+      if (!client || !to) {
+        throw new Error('WhatsApp client and recipient are required');
       }
 
-      // Validate that the number exists before sending
+      const isGroup = to.includes('@g.us');
+      let formattedTo = isGroup
+        ? this.formatGroupId(to)
+        : this.formatWhatsAppId(to);
+
+      // Never send through a disconnected or unavailable client.
+      const state = await client.getState();
+
+      if (state !== 'CONNECTED') {
+        throw new Error(`WhatsApp client is not connected (state: ${state})`);
+      }
+
       if (!isGroup) {
-        try {
-          const numberId = await client.getNumberId(formattedTo.replace('@c.us', ''));
-          if (!numberId) {
-            throw new Error(`The number ${formattedTo} is not registered on WhatsApp`);
-          }
-          // Use the validated number ID
-          formattedTo = numberId._serialized;
-        } catch (validationError) {
-          // If getNumberId fails, try to send anyway but with better error message
-          this.logger.warn(`Number validation failed for ${formattedTo}: ${validationError.message}`);
+        const numberId = await client.getNumberId(
+          formattedTo.replace('@c.us', '')
+        );
+
+        if (!numberId?._serialized) {
+          throw new Error(
+            `The number ${formattedTo} is not registered on WhatsApp`
+          );
         }
+
+        formattedTo = numberId._serialized;
       }
 
       const response = await client.sendMessage(formattedTo, message);
 
+      if (!response?.id?.id) {
+        throw new Error('WhatsApp returned no message ID after sending');
+      }
+
       if (isGroup) {
-        // For groups, try to get group info for better response
         try {
           const chat = await client.getChatById(formattedTo);
+
           return {
             success: true,
             messageId: response.id.id,
             groupName: chat.name,
             groupId: formattedTo
           };
-        } catch (chatError) {
-          // If we can't get group info, still return success
+        } catch (error) {
+          // Sending may have succeeded; don't report failure just
+          // because fetching group details failed.
+          this.logger.warn(
+            `Message sent, but group details could not be fetched: ${error.message}`
+          );
+
           return {
             success: true,
             messageId: response.id.id,
             groupId: formattedTo
           };
         }
-      } else {
-        return { success: true, messageId: response.id.id };
       }
+
+      return {
+        success: true,
+        messageId: response.id.id
+      };
     } catch (error) {
-      this.logger.error(`Failed to send message: ${error.message}`, error.stack);
-      throw new HttpException(`Failed to send message: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+      this.logger.error(
+        `Failed to send message: ${error.message}`,
+        error.stack
+      );
+
+      throw new HttpException(
+        `Failed to send message: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
+
 
   async sendBulkMessages(
     client: Client,

@@ -1,8 +1,9 @@
-FROM node:18-bookworm
+
+FROM node:22-bookworm
 
 WORKDIR /app
 
-# Chromium / Puppeteer dependencies
+# Chromium / Puppeteer system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
@@ -29,26 +30,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Create application data directory
-RUN mkdir -p /app/data && chmod -R 777 /app/data
+# Persistent application data directory
+RUN mkdir -p /app/data /app/uploads \
+    && chmod -R 777 /app/data /app/uploads
 
-# Copy package files first for better Docker caching
+# Install dependencies reproducibly
 COPY package.json package-lock.json ./
-
-# Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy application source
 COPY . .
 
-# Build NestJS application
-RUN npx nest build
+# Build NestJS
+RUN npm run build
 
-# Application port
-EXPOSE 3000
-
-# Production environment
 ENV NODE_ENV=production
 
-# Start application
+EXPOSE 3000
+
 CMD ["node", "dist/main.js"]
